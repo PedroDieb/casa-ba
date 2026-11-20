@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casa BA — Diagnóstico</title>
+<style>
+:root{
+  --bg:#0d0f14; --card:#151922; --border:#232a38;
+  --text:#e6e9f0; --muted:#8b93a7;
+  --green:#2ecc71; --yellow:#f1c40f; --red:#e74c3c;
+  --accent:#8b5cf6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;
+  min-height:100vh;padding:16px;max-width:520px;margin:0 auto}
+h1{font-size:1.15rem;margin-bottom:2px}
+.sub{color:var(--muted);font-size:.8rem;margin-bottom:14px}
+.banner{padding:12px 14px;border-radius:10px;font-weight:600;margin-bottom:14px;
+  border:1px solid var(--border);font-size:.95rem}
+.banner.ok{background:rgba(46,204,113,.12);color:var(--green);border-color:rgba(46,204,113,.4)}
+.banner.warn{background:rgba(241,196,15,.12);color:var(--yellow);border-color:rgba(241,196,15,.4)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:14px;margin-bottom:10px}
+.card .nome{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.card .valor{font-size:1.9rem;font-weight:700;margin:2px 0}
+.card .valor small{font-size:1rem;color:var(--muted);font-weight:400}
+.card .idade{font-size:.72rem;display:inline-block;padding:3px 8px;border-radius:20px;font-weight:600}
+.idade.vivo{background:rgba(46,204,113,.15);color:var(--green)}
+.idade.parado{background:rgba(241,196,15,.15);color:var(--yellow)}
+.idade.caido{background:rgba(231,76,60,.15);color:var(--red)}
+.acoes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+button{border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:10px;padding:14px 8px;font-size:1rem;font-weight:700;cursor:pointer;
+  transition:transform .05s}
+button:active{transform:scale(.96)}
+button.primario{background:var(--accent);border-color:var(--accent);color:#fff}
+button.ligar{background:rgba(46,204,113,.18);border-color:var(--green);color:var(--green)}
+button.desligar{background:rgba(231,76,60,.15);border-color:var(--red);color:var(--red)}
+.msg{font-size:.8rem;color:var(--muted);text-align:center;margin-top:10px;min-height:1.2em}
+.rodape{text-align:center;color:var(--muted);font-size:.68rem;margin-top:18px;line-height:1.5}
+</style>
+</head>
+<body>
+<h1>🏠 Casa Buenos Aires</h1>
+<div class="sub">Diagnóstico ao vivo — atualiza sozinho</div>
+<div class="card" id="card-pin" style="display:none">
+<div class="nome">🔐 Primeiro acesso — código de acesso</div>
+<input id="pin" type="password" placeholder="cole o código (aio_...)" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:#0d0f14;color:var(--text);font-size:1rem;margin-top:8px">
+<button style="width:100%;margin-top:10px" class="primario" id="b-pin">SALVAR E CONECTAR</button>
+<div class="msg" style="font-size:.7rem">só na primeira vez — fica salvo neste celular</div>
+</div>
+
+<div class="banner ok" id="banner">carregando…</div>
+
+<div class="card"><div class="nome">🐍 Terrário (DS18B20)</div>
+<div class="valor" id="v-ds">—</div><span class="idade caido" id="i-ds">—</span></div>
+
+<div class="card"><div class="nome">🌡️ Ambiente (AHT10)</div>
+<div class="valor" id="v-aht">—</div><span class="idade caido" id="i-aht">—</span></div>
+
+<div class="card"><div class="nome">💧 Umidade</div>
+<div class="valor" id="v-umid">—</div><span class="idade caido" id="i-umid">—</span></div>
+
+<div class="acoes">
+<button class="ligar" id="b-ligar">❄️ AR LIGAR</button>
+<button class="desligar" id="b-desligar">AR DESLIGAR</button>
+<button id="b-termoon">🤖 TERMO ON</button>
+<button id="b-termooff">TERMO OFF</button>
+</div>
+<div class="msg" id="msg"></div>
+<div class="rodape">Sistema ESP32 + Adafruit IO<br>atualizado <span id="atualizado">—</span></div>
+
+<script>
+const USER='joaopedrodieb';
+const BASE=`https://io.adafruit.com/api/v2/${USER}`;
+const feeds={ds:'estacao-dot-ds',aht:'estacao-dot-aht',umid:'estacao-dot-umid'};
+const $=id=>document.getElementById(id);
+
+// chave: do link (?k=...) na primeira vez, ou do localStorage
+function pegaKey(){
+  const q=new URLSearchParams(location.search);
+  if(q.get('k'))localStorage.setItem('aio_key',q.get('k'));
+  const k=localStorage.getItem('aio_key');
+  if(k){
+    history.replaceState(null,'',location.pathname); // limpa a key do endereco
+    $('card-pin').style.display='none';
+  }else{
+    $('card-pin').style.display='block';
+  }
+  return k;
+}
+let KEY=pegaKey()||'';
+$('b-pin').onclick=()=>{localStorage.setItem('aio_key',$('pin').value);location.reload();};
+
+function fmtIdade(seg){
+  if(seg<60)return `há ${Math.round(seg)}s`;
+  if(seg<3600)return `há ${Math.round(seg/60)}min`;
+  return `há ${Math.round(seg/3600)}h`;
+}
+function estado(idade){
+  if(idade<180)return'vivo';
+  if(idade<3600)return'parado';
+  return'caido';
+}
+
+async function atualiza(){
+  let problemas=[];
+  for(const [k,feed] of Object.entries(feeds)){
+    try{
+      const r=await fetch(`${BASE}/feeds/${feed}/data/last`,{headers:{'X-AIO-Key':KEY}});
+      if(!r.ok)throw new Error(r.status);
+      const d=await r.json();
+      const idade=(Date.now()-new Date(d.created_at).getTime())/1000;
+      const st=estado(idade);
+      const unid=k==='umid'?'%':'°C';
+      const v=parseFloat(d.value);
+      $(`v-${k}`).textContent=`${v.toFixed(1)}${k==='ds'||k==='aht'?'':''}${unid}`;
+      const ie=$( `i-${k}` );
+      ie.textContent=fmtIdade(idade);
+      ie.className='idade '+st;
+      if(st!=='vivo')problemas.push(k);
+    }catch(e){
+      const ie=$(`i-${k}`);ie.textContent='erro de rede';ie.className='idade caido';
+      problemas.push(k);
+    }
+  }
+  const b=$('banner');
+  if(problemas.length===0){
+    b.className='banner ok';
+    b.textContent='✅ TUDO OK — sensores publicando normalmente';
+  }else{
+    b.className='banner warn';
+    const nomes={ds:'terrário',aht:'ambiente',umid:'umidade'};
+    b.textContent='⚠️ ATENÇÃO: '+problemas.map(k=>nomes[k]).join(', ')+
+      ' sem dados frescos — se persistir, desligue/religue a placa da estação (carregador)';
+  }
+  $('atualizado').textContent=new Date().toLocaleTimeString('pt-BR');
+}
+
+async function comando(cmd){
+  $('msg').textContent='enviando '+cmd+'… (o ar executa em até 15s)';
+  try{
+    const r=await fetch(`${BASE}/feeds/ar-dot-comando/data`,{
+      method:'POST',headers:{'X-AIO-Key':KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({value:cmd})});
+    $('msg').textContent=r.ok?`✅ comando "${cmd}" enviado`:'❌ falhou (HTTP '+r.status+')';
+  }catch(e){$('msg').textContent='❌ falhou: sem internet?';}
+}
+
+$('b-ligar').onclick=()=>comando('ligar');
+$('b-desligar').onclick=()=>comando('desligar');
+$('b-termoon').onclick=()=>comando('termoon');
+$('b-termooff').onclick=()=>comando('termooff');
+
+atualiza();
+setInterval(atualiza,30000);
+</script>
+</body>
+</html>
